@@ -1,5 +1,3 @@
-VERSION = "v0.3.1 - Stable Scoring Patch"
-
 from __future__ import annotations
 
 import argparse
@@ -10,6 +8,7 @@ from datetime import datetime, UTC
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
 
+VERSION = "v0.3.1 - Stable Scoring Patch"
 
 # -----------------------------
 # Defaults / Config
@@ -380,7 +379,16 @@ def write_outputs(packet: OutputPacket, out_dir: Path) -> None:
 
     changes = [asdict(e) for e in packet.suggested_edits]
     (out_dir / "changes.json").write_text(json.dumps(changes, indent=2), encoding="utf-8")
-    (out_dir / "score.json").write_text(json.dumps(asdict(packet.match_scores), indent=2), encoding="utf-8")
+    score_payload = {
+    "version": VERSION,
+    "scores": asdict(packet.match_scores)
+}
+
+    (out_dir / "score.json").write_text(
+    json.dumps(score_payload, indent=2),
+    encoding="utf-8"
+)
+
 
 
 # -----------------------------

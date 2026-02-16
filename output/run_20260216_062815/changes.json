@@ -1,0 +1,9 @@
+[
+  {
+    "target": "bullet",
+    "original": "& 'c:\\Users\\alexc\\Downloads\\Phone Link\\Alex_Crick_Hybrid_IT_AI_Systems_Resume_Clean.pdf'",
+    "suggestion": "& 'c:\\Users\\alexc\\Downloads\\Phone Link\\Alex_Crick_Hybrid_IT_AI_Systems_Resume_Clean.pdf' (Tools used where applicable: python.)",
+    "rationale": "Tightened wording for clarity. Added a tool mention to align with the posting\u2014confirm you actually used python.",
+    "needs_confirmation": true
+  }
+]
