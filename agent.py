@@ -1,3 +1,5 @@
+VERSION = "v0.3.1 - Stable Scoring Patch"
+
 from __future__ import annotations
 
 import argparse
@@ -431,6 +433,7 @@ def main() -> None:
     print(f"- {run_out_dir / 'packet.md'}")
     print(f"- {run_out_dir / 'changes.json'}")
     print(f"- {run_out_dir / 'score.json'}")
+    print("Version:", VERSION)
 
 
 if __name__ == "__main__":

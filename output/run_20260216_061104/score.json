@@ -1,0 +1,27 @@
+{
+  "keyword_coverage": 0.0,
+  "overlap_keywords": [],
+  "missing_keywords": [
+    "automation",
+    "intune",
+    "powershell",
+    "windows",
+    "[PHRASE] 00pm tampa office",
+    "[PHRASE] active directory microsoft",
+    "[PHRASE] autopilot microsoft intune",
+    "[PHRASE] background expertise hardware",
+    "[PHRASE] certification experience microsoft",
+    "[PHRASE] compliance security backup",
+    "[PHRASE] core network technologies",
+    "[PHRASE] directory microsoft office",
+    "[PHRASE] ensure compliance security",
+    "[PHRASE] excel outlook powerpoint",
+    "[PHRASE] experience microsoft active",
+    "[PHRASE] expertise hardware software",
+    "[PHRASE] hardware software network",
+    "[PHRASE] hardware software networking",
+    "[PHRASE] incidents windows server"
+  ],
+  "red_flags": [],
+  "confidence": 0.617
+}
