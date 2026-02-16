@@ -1,0 +1,25 @@
+{
+  "keyword_coverage": 0.35,
+  "overlap_keywords": [
+    "troubleshooting"
+  ],
+  "missing_keywords": [
+    "[PHRASE] connectivity network maintenance",
+    "[PHRASE] defective devices network",
+    "[PHRASE] design connectivity network",
+    "[PHRASE] devices network design",
+    "[PHRASE] fundamental networking hardware",
+    "[PHRASE] hardware network technician",
+    "[PHRASE] hardware software prioritize",
+    "[PHRASE] inventory network electronics",
+    "[PHRASE] maintenance inventory network",
+    "[PHRASE] network electronics qualifications",
+    "[PHRASE] network maintenance inventory",
+    "[PHRASE] network systems repairs",
+    "[PHRASE] network technician team",
+    "[PHRASE] networking hardware software",
+    "[PHRASE] seeking hardware network"
+  ],
+  "red_flags": [],
+  "confidence": 0.492
+}
