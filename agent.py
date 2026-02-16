@@ -1,18 +1,20 @@
 from __future__ import annotations
 
+import argparse
 import json
 import re
 from dataclasses import dataclass, asdict
+from datetime import datetime, UTC
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
 
 
 # -----------------------------
-# Config
+# Defaults / Config
 # -----------------------------
-RESUME_PATH = Path("resume.txt")
-JOB_PATH = Path("job_posting.txt")
-OUT_DIR = Path("output")
+DEFAULT_RESUME_PATH = Path("resume.txt")
+DEFAULT_JOB_PATH = Path("job_posting.txt")
+DEFAULT_OUT_BASE = Path("output")
 
 # Simple keyword banks (expand over time)
 TECH_KEYWORDS = [
@@ -62,33 +64,34 @@ class OutputPacket:
 # Helpers
 # -----------------------------
 TECH_SIGNAL_WORDS = {
-    "windows","linux","mac","microsoft","azure","aws","gcp",
-    "active","directory","vpn","mfa","intune","servicenow",
-    "jira","ticket","incident","sla","endpoint","desktop",
-    "hardware","software","network","printer","outlook",
-    "exchange","o365","office","sql","python","api",
-    "powershell","security","firewall","router","switch",
-    "server","deployment","imaging","autopilot","sccm"
+    "windows", "linux", "mac", "microsoft", "azure", "aws", "gcp",
+    "active", "directory", "vpn", "mfa", "intune", "servicenow",
+    "jira", "ticket", "incident", "sla", "endpoint", "desktop",
+    "hardware", "software", "network", "printer", "outlook",
+    "exchange", "o365", "office", "sql", "python", "api",
+    "powershell", "security", "firewall", "router", "switch",
+    "server", "deployment", "imaging", "autopilot", "sccm"
 }
-def rerank_phrases_diverse(phrases: List[str], max_per_token: int = 3) -> List[str]:
-    """
-    Limit how many phrases can be selected that share the same most-informative token.
-    Prevents 'network ...' dominating the list.
-    """
-    counts: Dict[str, int] = {}
-    out: List[str] = []
-    for p in phrases:
-        tokens = p.split()
-        # pick the "anchor" token: longest token usually carries meaning
-        anchor = max(tokens, key=len) if tokens else p
-        counts[anchor] = counts.get(anchor, 0) + 1
-        if counts[anchor] <= max_per_token:
-            out.append(p)
-    return out
+
+
+STOPWORDS = {
+    "the", "and", "or", "a", "an", "to", "of", "in", "for", "with", "on", "at", "by", "from", "as", "is", "are", "be",
+    "this", "that", "these", "those", "you", "your", "we", "our", "will", "can", "may", "must", "should", "have",
+    "has", "had", "their", "they", "them", "it", "its", "not", "but", "if", "than", "then", "about", "into", "over",
+    "within", "across", "per", "including", "etc", "join", "ability", "perform", "routine", "handle", "maintain",
+    "collaborate", "improvement", "knowledge"
+}
+
 
 def read_text(path: Path) -> str:
     if not path.exists():
         raise FileNotFoundError(f"Missing file: {path.resolve()}")
+    return path.read_text(encoding="utf-8", errors="replace").strip()
+
+
+def read_text_optional(path: Path) -> str:
+    if not path.exists():
+        return ""
     return path.read_text(encoding="utf-8", errors="replace").strip()
 
 
@@ -97,12 +100,40 @@ def normalize(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip().lower()
 
 
+def collect_pasted_input(prompt: str) -> str:
+    """
+    Paste-first UX: user pastes content; we end on TWO consecutive blank lines.
+    """
+    print(prompt)
+    print("(Press Enter twice to submit)\n")
+
+    lines: List[str] = []
+    empty_count = 0
+
+    while True:
+        line = input()
+        if line.strip() == "":
+            empty_count += 1
+            if empty_count >= 2:
+                break
+        else:
+            empty_count = 0
+            lines.append(line)
+
+    return "\n".join(lines).strip()
+
+
+def make_run_dir(out_base: Path) -> Path:
+    ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+    run_dir = out_base / f"run_{ts}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return run_dir
+
 
 def extract_keywords(text: str, keyword_list: List[str]) -> List[str]:
     t = normalize(text)
     found = []
     for kw in keyword_list:
-        # word boundary where appropriate; keep simple
         if re.search(rf"\b{re.escape(kw.lower())}\b", t):
             found.append(kw)
     return sorted(set(found), key=str.lower)
@@ -110,21 +141,15 @@ def extract_keywords(text: str, keyword_list: List[str]) -> List[str]:
 
 def find_red_flags(job_text: str) -> List[str]:
     t = normalize(job_text)
-    hits = []
-    for p in RED_FLAG_PHRASES:
-        if p in t:
-            hits.append(p)
-    return hits
+    return [p for p in RED_FLAG_PHRASES if p in t]
 
 
 def split_bullets(resume_text: str) -> List[str]:
-    # Heuristic: capture common bullet styles
     lines = [ln.strip() for ln in resume_text.splitlines()]
     bullets = []
     for ln in lines:
         if re.match(r"^(\-|\*|•)\s+", ln):
             bullets.append(re.sub(r"^(\-|\*|•)\s+", "", ln).strip())
-    # fallback: if no bullets, return a few long-ish sentences
     if not bullets:
         sentences = re.split(r"(?<=[.!?])\s+", resume_text.strip())
         bullets = [s.strip() for s in sentences if len(s.strip()) > 40][:8]
@@ -132,28 +157,17 @@ def split_bullets(resume_text: str) -> List[str]:
 
 
 def safe_rewrite_bullet(bullet: str, target_keywords: List[str]) -> SuggestedEdit | None:
-    """
-    Suggest a rewrite that stays faithful:
-    - do not invent new tools
-    - only add keywords if they reasonably fit generic phrasing
-    If uncertain, mark needs_confirmation=True.
-    """
     b = bullet.strip()
     if not b or len(b) < 20:
         return None
 
-    # If bullet already contains measurable impact, keep it, just tighten.
-    tightened = b
-    tightened = re.sub(r"\bvery\b|\breally\b|\bjust\b", "", tightened, flags=re.IGNORECASE).strip()
+    tightened = re.sub(r"\bvery\b|\breally\b|\bjust\b", "", b, flags=re.IGNORECASE).strip()
     tightened = re.sub(r"\s{2,}", " ", tightened)
 
-    # Try to gently align language to job: add one keyword phrase only if plausible.
-    # We avoid specific tools unless already present in the resume.
     add_kw = None
     for kw in target_keywords:
         if kw.lower() in normalize(b):
             continue
-        # Choose only "general" keywords that don't imply false experience
         if kw.lower() in {"troubleshooting", "automation", "incident", "sla", "api", "sql", "python", "git"}:
             add_kw = kw
             break
@@ -163,7 +177,6 @@ def safe_rewrite_bullet(bullet: str, target_keywords: List[str]) -> SuggestedEdi
     rationale = "Tightened wording for clarity."
 
     if add_kw:
-        # Add as a general framing rather than claiming tool mastery
         if add_kw.lower() in {"python", "sql", "api", "git"}:
             suggestion = f"{suggestion} (Tools used where applicable: {add_kw.upper() if add_kw=='sql' else add_kw}.)"
             needs_confirmation = True
@@ -197,7 +210,7 @@ def build_interview_pack(job_text: str, overlap: List[str], missing: List[str]) 
         "What tools or systems have you used to manage work (ticketing, docs, version control)?",
         "What would your first 30 days look like in this role?"
     ]
-    talking_points = []
+    talking_points: List[str] = []
     if overlap:
         talking_points.append(f"Emphasize matching keywords you already have: {', '.join(overlap[:10])}.")
     if missing:
@@ -206,36 +219,27 @@ def build_interview_pack(job_text: str, overlap: List[str], missing: List[str]) 
     talking_points.append("Keep claims grounded—no tool name-dropping unless you’ve used it.")
     return questions, talking_points
 
-STOPWORDS = {
-    "the","and","or","a","an","to","of","in","for","with","on","at","by","from","as","is","are","be",
-    "this","that","these","those","you","your","we","our","will","can","may","must","should","have",
-    "has","had","their","they","them","it","its","not","but","if","than","then","about","into","over",
-    "within","across","per","including","etc", "join","ability","perform","routine","handle","maintain","collaborate","improvement","knowledge"
-}
 
 def tokenize_words(text: str) -> List[str]:
     t = normalize(text)
     words = re.findall(r"[a-z0-9\+\#\.]+", t)
     return [w for w in words if w and w not in STOPWORDS and len(w) > 2]
-import re
 
-BANNED_PHRASE_PATTERNS = [
-    r"\b\d+(\.\d+)?\b",                 # numbers like 22.00
-    r"\b\d+(\.\d+)?-\d+(\.\d+)?\b",     # ranges like 18.00-22.00
-    r"\b401k?\b",                       # 401 / 401k
-    r"\bdental\b|\bvision\b|\bpto\b|\bbenefit(s)?\b|\binsurance\b",
-    r"\bhour\b|\bhourly\b|\bpay\b|\bwage\b|\bsalary\b",
-    r"\bjoin\b|\btechnician\b",         # optional: can remove if you *want* technician phrases
-]
 
-GENERIC_WORDS = {
-    "ability","prioritize","environment","fast","paced","team","player","communication",
-    "skills","motivated","responsible","reliable","schedule","shift","hours","weekend"
-}
+def rerank_phrases_diverse(phrases: List[str], max_per_token: int = 3) -> List[str]:
+    counts: Dict[str, int] = {}
+    out: List[str] = []
+    for p in phrases:
+        tokens = p.split()
+        anchor = max(tokens, key=len) if tokens else p
+        counts[anchor] = counts.get(anchor, 0) + 1
+        if counts[anchor] <= max_per_token:
+            out.append(p)
+    return out
+
 
 def is_good_phrase(p: str) -> bool:
     words = p.lower().split()
-    # Keep phrase only if it contains at least one tech signal word
     return any(w in TECH_SIGNAL_WORDS for w in words)
 
 
@@ -243,26 +247,19 @@ def extract_phrases(text: str, n: int = 2, top_k: int = 25) -> List[str]:
     words = tokenize_words(text)
     phrases = []
     for i in range(len(words) - n + 1):
-        p = " ".join(words[i:i+n])
-        phrases.append(p)
+        phrases.append(" ".join(words[i:i+n]))
 
-    # frequency count
     freq: Dict[str, int] = {}
     for p in phrases:
         freq[p] = freq.get(p, 0) + 1
 
-    # drop low-signal phrases (appear once) unless the posting is short
     items = sorted(freq.items(), key=lambda x: (-x[1], x[0]))
-    # keep phrases that appear more than once (higher signal)
     filtered = [p for p, cnt in items if cnt > 1]
-    # further filter for tech-signal content
     filtered = [p for p in filtered if is_good_phrase(p)]
+
     if len(filtered) < 10:
-        filtered = [p for p, _ in items]  # fallback for short postings
-        # apply tech-signal filter to fallback results as well
+        filtered = [p for p, _ in items]
         filtered = [p for p in filtered if is_good_phrase(p)]
-    
-    
 
     filtered = rerank_phrases_diverse(filtered, max_per_token=2)
     return filtered[:top_k]
@@ -277,6 +274,7 @@ def phrase_coverage(resume_text: str, job_text: str) -> Tuple[float, List[str], 
 
     coverage = (len(overlap) / len(job_phrases)) if job_phrases else 0.0
     return coverage, overlap, missing
+
 
 # -----------------------------
 # Core "agent"
@@ -332,11 +330,10 @@ def run_agent(resume_text: str, job_text: str) -> OutputPacket:
 # -----------------------------
 # Output writers
 # -----------------------------
-def write_outputs(packet: OutputPacket) -> None:
-    OUT_DIR.mkdir(exist_ok=True)
+def write_outputs(packet: OutputPacket, out_dir: Path) -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    # packet.md
-    md = []
+    md: List[str] = []
     md.append("# Job Application Copilot Packet\n")
     md.append("## Role Fit Summary\n")
     md.append(packet.role_summary + "\n")
@@ -347,6 +344,7 @@ def write_outputs(packet: OutputPacket) -> None:
     md.append(f"- Confidence: **{ms.confidence:.0%}**\n")
     if ms.red_flags:
         md.append(f"- Red flags detected in posting: **{', '.join(ms.red_flags)}**\n")
+
     md.append("\n### Overlap Keywords\n")
     md.append(", ".join(ms.overlap_keywords) if ms.overlap_keywords else "_None detected from the keyword bank._")
     md.append("\n\n### Missing Keywords\n")
@@ -369,32 +367,70 @@ def write_outputs(packet: OutputPacket) -> None:
     md.append("\n### Likely Questions\n")
     for q in packet.interview_questions:
         md.append(f"- {q}")
+
     md.append("\n\n### Talking Points\n")
     for tp in packet.talking_points:
         md.append(f"- {tp}")
+
     md.append("")
 
-    (OUT_DIR / "packet.md").write_text("\n".join(md), encoding="utf-8")
+    (out_dir / "packet.md").write_text("\n".join(md), encoding="utf-8")
 
-    # changes.json
     changes = [asdict(e) for e in packet.suggested_edits]
-    (OUT_DIR / "changes.json").write_text(json.dumps(changes, indent=2), encoding="utf-8")
-
-    # score.json
-    (OUT_DIR / "score.json").write_text(json.dumps(asdict(packet.match_scores), indent=2), encoding="utf-8")
+    (out_dir / "changes.json").write_text(json.dumps(changes, indent=2), encoding="utf-8")
+    (out_dir / "score.json").write_text(json.dumps(asdict(packet.match_scores), indent=2), encoding="utf-8")
 
 
-def main():
-    resume_text = read_text(RESUME_PATH)
-    job_text = read_text(JOB_PATH)
+# -----------------------------
+# Main
+# -----------------------------
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Job Application Co-Pilot Agent (Mock Mode): compare resume vs job posting and generate a packet."
+    )
+    parser.add_argument("--resume", "-r", help="Path to a resume .txt file (optional).")
+    parser.add_argument("--job", "-j", help="Path to a job posting .txt file (optional).")
+    parser.add_argument(
+        "--out",
+        default=str(DEFAULT_OUT_BASE),
+        help="Output base directory (default: output). Each run is saved into output/run_YYYYMMDD_HHMMSS/."
+    )
+    parser.add_argument(
+        "--fallback-default-files",
+        action="store_true",
+        help="If paste mode is used and you paste nothing, fall back to resume.txt/job_posting.txt if present."
+    )
+    args = parser.parse_args()
+
+    out_base = Path(args.out)
+    run_out_dir = make_run_dir(out_base)
+
+    # Option A: paste mode unless BOTH files provided
+    if args.resume and args.job:
+        resume_text = read_text(Path(args.resume))
+        job_text = read_text(Path(args.job))
+    else:
+        resume_text = collect_pasted_input("Paste RESUME text now:")
+        job_text = collect_pasted_input("Paste JOB POSTING text now:")
+
+        if args.fallback_default_files:
+            if not resume_text:
+                resume_text = read_text_optional(DEFAULT_RESUME_PATH)
+            if not job_text:
+                job_text = read_text_optional(DEFAULT_JOB_PATH)
+
+        if not resume_text or not job_text:
+            raise ValueError(
+                "Missing inputs. Either paste resume + job text, OR provide --resume and --job file paths."
+            )
 
     packet = run_agent(resume_text, job_text)
-    write_outputs(packet)
+    write_outputs(packet, run_out_dir)
 
     print("✅ Done. Generated:")
-    print(f"- {OUT_DIR / 'packet.md'}")
-    print(f"- {OUT_DIR / 'changes.json'}")
-    print(f"- {OUT_DIR / 'score.json'}")
+    print(f"- {run_out_dir / 'packet.md'}")
+    print(f"- {run_out_dir / 'changes.json'}")
+    print(f"- {run_out_dir / 'score.json'}")
 
 
 if __name__ == "__main__":
