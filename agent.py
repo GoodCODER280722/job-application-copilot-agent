@@ -331,8 +331,20 @@ def run_agent(resume_text: str, job_text: str) -> OutputPacket:
 # -----------------------------
 # Output writers
 # -----------------------------
-def write_outputs(packet: OutputPacket, out_dir: Path) -> None:
+
+def input_stats(label: str, text: str) -> dict:
+    text = text or ""
+    return {
+        "label": label,
+        "chars": len(text),
+        "words": len(text.split()),
+        "preview": text[:200]
+    }
+
+
+def write_outputs(packet: OutputPacket, out_dir: Path, resume_stats: dict, job_stats: dict) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
+
 
     md: List[str] = []
     md.append("# Job Application Copilot Packet\n")
@@ -429,20 +441,23 @@ def main() -> None:
             if not job_text:
                 job_text = read_text_optional(DEFAULT_JOB_PATH)
 
-        if not resume_text or not job_text:
-            raise ValueError(
-                "Missing inputs. Either paste resume + job text, OR provide --resume and --job file paths."
-            )
+    if not resume_text or not job_text:
+        raise ValueError(
+            "Missing inputs. Either paste resume + job text, OR provide --resume and --job file paths."
+        )
+
+    resume_stats = input_stats("resume", resume_text)
+    job_stats = input_stats("job", job_text)
 
     packet = run_agent(resume_text, job_text)
-    write_outputs(packet, run_out_dir)
+    write_outputs(packet, run_out_dir, resume_stats, job_stats)
 
     print("✅ Done. Generated:")
     print(f"- {run_out_dir / 'packet.md'}")
     print(f"- {run_out_dir / 'changes.json'}")
     print(f"- {run_out_dir / 'score.json'}")
     print("Version:", VERSION)
-
+    
 
 if __name__ == "__main__":
     main()

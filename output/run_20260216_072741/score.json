@@ -1,0 +1,16 @@
+{
+  "version": "v0.3.1 - Stable Scoring Patch",
+  "scores": {
+    "keyword_coverage": 0.0,
+    "overlap_keywords": [],
+    "missing_keywords": [
+      "prompt",
+      "python",
+      "[PHRASE] languages such python",
+      "[PHRASE] python javascript. excellent",
+      "[PHRASE] such python javascript."
+    ],
+    "red_flags": [],
+    "confidence": 0.533
+  }
+}
